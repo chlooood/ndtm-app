@@ -10,10 +10,14 @@ import type { ParsedNoteNode } from '@/lib/scanner/textIngest';
 import { applySpotAction, newTrip, rechain, spotsFromNotes, tripFromNotes, type TripsState } from '@/lib/trips/itinerary';
 import { publishTrip } from '@/lib/trips/repository';
 import { readJSON, writeJSON } from '@/lib/storage';
+import { isSupabaseConfigured, supabase } from '@/lib/supabase';
+import { mergeById, pullAll, pushSpot, pushTrip, uploadTripPhotos } from '@/lib/sync/cloud';
 import type { AccommodationType, Booking, Trip, TripStop } from '@/lib/trips/types';
 
 // Trips and spots are saved on the device (lib/storage.ts) after every
-// change, so a plan survives restarts. Shared trips also live in Supabase.
+// change, so a plan survives restarts. When you're signed in they also sync
+// to your Supabase account (lib/sync/cloud.ts), photos included, so another
+// device or the web app sees the same trips. Shared trips live separately.
 
 type State = TripsState & { spots: LifestyleSpot[] };
 
@@ -21,6 +25,21 @@ type State = TripsState & { spots: LifestyleSpot[] };
 export type GoogleEventIds = { stops: Record<string, string>; bookings: Record<string, string> };
 
 const STORAGE_KEY = 'ndtm.trips.v1';
+
+/** off: not signed in · syncing: talking to Supabase · synced: cloud is current · error: will retry on the next change. */
+export type SyncStatus = 'off' | 'syncing' | 'synced' | 'error';
+
+/** Stamps a change time on every trip or spot that is a new object since `prev`. */
+function stampChanges(prev: State, next: State): State {
+  const now = new Date().toISOString();
+  const prevTrips = new Map(prev.trips.map((t) => [t.id, t]));
+  const prevSpots = new Map(prev.spots.map((x) => [x.id, x]));
+  return {
+    ...next,
+    trips: next.trips.map((t) => (prevTrips.get(t.id) === t ? t : { ...t, updatedAt: now })),
+    spots: next.spots.map((x) => (prevSpots.get(x.id) === x ? x : { ...x, updatedAt: now })),
+  };
+}
 
 type TripsContextValue = {
   trips: Trip[];
@@ -51,6 +70,8 @@ type TripsContextValue = {
   assembleFromNotes: (nodes: ParsedNoteNode[]) => Trip;
   /** Pasted notes → independent spots scattered on Home, not tied to any trip. */
   scatterFromNotes: (nodes: ParsedNoteNode[]) => LifestyleSpot[];
+  /** Cloud sync state for the account card. */
+  syncStatus: SyncStatus;
 };
 
 const TripsContext = createContext<TripsContextValue | null>(null);
@@ -82,11 +103,103 @@ export function TripsProvider({ children }: { children: ReactNode }) {
     if (JSON.stringify(stats) !== JSON.stringify(profile.stats)) void updateProfile({ stats });
   }, [state.trips, loaded, profile.stats, updateProfile]);
 
-  const commit = useCallback((next: State) => {
+  /** Saves without stamping change times: for data that came from the cloud. */
+  const commitRaw = useCallback((next: State) => {
     latest.current = next;
     setState(next);
     writeJSON(STORAGE_KEY, next);
   }, []);
+  /** Saves a local edit, stamping what changed so sync knows it's newer. */
+  const commit = useCallback((next: State) => commitRaw(stampChanges(latest.current, next)), [commitRaw]);
+
+  // --- Cloud sync -------------------------------------------------------
+  // Who is signed in to Supabase (set by Google sign-in), or null.
+  const [owner, setOwner] = useState<string | null>(null);
+  const [pushStatus, setSyncStatus] = useState<SyncStatus>('synced');
+  // Which account the cloud copy has been merged for; until then we're still syncing.
+  const [pulledFor, setPulledFor] = useState<string | null>(null);
+  const syncStatus: SyncStatus = !owner ? 'off' : pulledFor !== owner ? 'syncing' : pushStatus;
+  // The change time last pushed for each trip and spot, so only edits go up.
+  const pushed = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    void supabase.auth.getSession().then(({ data }) => setOwner(data.session?.user.id ?? null));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => setOwner(session?.user.id ?? null));
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  // On sign-in: pull the cloud copy and merge it in, newest change winning.
+  useEffect(() => {
+    pushed.current.clear();
+    if (!owner) return;
+    let active = true;
+    pullAll()
+      .then((remote) => {
+        if (!active) return;
+        for (const t of remote.trips) pushed.current.set(t.id, t.updatedAt ?? '');
+        for (const x of remote.spots) pushed.current.set(x.id, x.updatedAt ?? '');
+        const s = latest.current;
+        // A brand-new empty trip on this device shouldn't hide the cloud's trips.
+        const local = s.trips.filter((t) => t.stops.length > 0 || t.id === s.activeTripId);
+        const trips = mergeById(local, remote.trips);
+        const keepActive = trips.find((t) => t.id === s.activeTripId)?.stops.length;
+        commitRaw({
+          trips,
+          spots: mergeById(s.spots, remote.spots),
+          activeTripId: keepActive ? s.activeTripId : (trips.find((t) => t.stops.length) ?? trips[0]).id,
+        });
+        setSyncStatus('synced');
+        setPulledFor(owner);
+      })
+      .catch((e: Error) => {
+        console.warn(e.message);
+        if (!active) return;
+        setSyncStatus('error');
+        setPulledFor(owner);
+      });
+    return () => {
+      active = false;
+    };
+  }, [owner, commitRaw]);
+
+  // After edits settle, upload new photos and push whatever changed.
+  useEffect(() => {
+    if (!owner || pulledFor !== owner) return;
+    const timer = setTimeout(async () => {
+      const s = latest.current;
+      const trips = s.trips.filter((t) => t.stops.length && pushed.current.get(t.id) !== (t.updatedAt ?? ''));
+      const spots = s.spots.filter((x) => pushed.current.get(x.id) !== (x.updatedAt ?? ''));
+      if (!trips.length && !spots.length) {
+        setSyncStatus('synced');
+        return;
+      }
+      setSyncStatus('syncing');
+      try {
+        const uploaded: Trip[] = [];
+        for (const trip of trips) {
+          const withPhotos = await uploadTripPhotos(owner, trip);
+          await pushTrip(owner, withPhotos);
+          pushed.current.set(trip.id, trip.updatedAt ?? '');
+          if (withPhotos !== trip) uploaded.push(withPhotos);
+        }
+        for (const spot of spots) {
+          await pushSpot(owner, spot);
+          pushed.current.set(spot.id, spot.updatedAt ?? '');
+        }
+        // Remember the new photo paths locally without counting it as an edit.
+        if (uploaded.length) {
+          const now = latest.current;
+          commitRaw({ ...now, trips: now.trips.map((t) => uploaded.find((u) => u.id === t.id && u.updatedAt === t.updatedAt) ?? t) });
+        }
+        setSyncStatus('synced');
+      } catch (e) {
+        console.warn(e instanceof Error ? e.message : e);
+        setSyncStatus('error');
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [state, owner, pulledFor, commitRaw]);
 
   /** Applies `fn` to the active trip's stops and re-chains dates and logistics. */
   const updateStops = useCallback(
@@ -104,6 +217,7 @@ export function TripsProvider({ children }: { children: ReactNode }) {
     const activeTrip = state.trips.find((t) => t.id === state.activeTripId) ?? state.trips[0];
     return {
       trips: state.trips,
+      syncStatus,
       activeTrip,
       spots: state.spots,
       setActiveTrip: (tripId) => commit({ ...latest.current, activeTripId: tripId }),
@@ -199,7 +313,7 @@ export function TripsProvider({ children }: { children: ReactNode }) {
         commit({ ...s, trips: [{ ...trip, mirroredFrom: trip.id }, ...s.trips.filter((t) => t.id !== trip.id)] });
       },
     };
-  }, [state, commit, updateStops, ctx, profile]);
+  }, [state, commit, updateStops, ctx, profile, syncStatus]);
 
   return <TripsContext value={value}>{children}</TripsContext>;
 }

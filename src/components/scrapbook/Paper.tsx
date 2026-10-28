@@ -7,6 +7,7 @@ import { View } from 'react-native';
 import Svg, { Circle, Defs, G, Path, Text as SvgText, TextPath } from 'react-native-svg';
 
 import { T } from '@/components/ui/Text';
+import { usePhoto } from '@/lib/sync/usePhoto';
 
 /** Deterministic jitter so an edge looks hand-torn but never changes between renders. */
 function jagged(seed: number, steps: number, depth: number): string {
@@ -85,8 +86,23 @@ export function Postmark({ text, ink = '#3E5A49', kind, size = 84 }: { text: str
   );
 }
 
-/** A polaroid of the scanned screenshot, or a postmark if there's no picture. */
-export function Polaroid({ uri, caption, width = 112, height = 132, rotate = 3 }: { uri?: string; caption?: string; width?: number; height?: number; rotate?: number }) {
+/** A polaroid of the scanned screenshot (local file or stored copy), or a blank print if there's no picture. */
+export function Polaroid({
+  localUri,
+  path,
+  caption,
+  width = 112,
+  height = 132,
+  rotate = 3,
+}: {
+  localUri?: string;
+  path?: string;
+  caption?: string;
+  width?: number;
+  height?: number;
+  rotate?: number;
+}) {
+  const uri = usePhoto(localUri, path);
   return (
     <View
       style={{

@@ -49,6 +49,8 @@ export type LifestyleSpot = {
   place: PlaceRef;
   source: { type: 'scan'; platform: SourcePlatform; context: string } | { type: 'manual' } | { type: 'notes' };
   createdAt: string;
+  /** When this spot last changed on any device; the newer copy wins when syncing. */
+  updatedAt?: string;
 };
 
 /** What the user typed into the Night out form. */

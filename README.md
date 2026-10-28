@@ -30,7 +30,7 @@ Trip planner for exchange students in Lyon: screenshot a Reel, TikTok or trail p
 npm install
 cp .env.example .env.local        # fill in Supabase + Google values (below)
 npx supabase link --project-ref <ref>
-npx supabase db push              # trips table, scans bucket, imprint column
+npx supabase db push              # tables, private buckets and owner-only policies
 npx supabase secrets set ANTHROPIC_API_KEY=... GOOGLE_PLACES_API_KEY=...
 npx supabase functions deploy scan-trip
 npx supabase functions deploy parse-notes
@@ -54,5 +54,9 @@ npx expo start --web              # web works without a native build
 4. `lib/logistics/tailoredEngine.ts` turns it into a leg using your profile: city legs get rail and hostel links; alpine legs follow your hut or tent choice and region (transit to the trailhead in Europe, Google Maps driving in North America).
 
 Pasted notes go through `supabase/functions/parse-notes` the same way, then become a chained trip or loose scrapbook cards.
+
+### Your data
+
+Trips and spots are saved on the device after every change. Once you sign in with Google, they also sync to your Supabase account (`user_trips` and `user_spots`), and booking and scan photos upload to the private `photos` bucket. Row-level security means only you can read or change your rows and files. Sign in on a second device or the web app and your trips merge in, with the newest edit to each trip winning. Photos on a trip you share stay private, so friends see the trip without them.
 
 Share links look like `ndtm://trip/<id>` and open `src/app/trip/[id].tsx`, drawn in the sharer's imprint pattern.

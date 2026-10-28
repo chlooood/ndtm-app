@@ -31,7 +31,7 @@ export function ScrapbookPage({ stop, index, children }: { stop: TripStop; index
             </Text>
           </View>
           <View>
-            <Polaroid uri={stop.sourceImageUri} rotate={-tilt * 2.5} caption={stop.scan?.sourcePlatform === 'tiktok' ? 'from TikTok' : undefined} />
+            <Polaroid localUri={stop.sourceImageUri} path={stop.sourceImagePath} rotate={-tilt * 2.5} caption={stop.scan?.sourcePlatform === 'tiktok' ? 'from TikTok' : undefined} />
             <Tape width={44} rotate={14} style={{ top: -8, right: 8 }} />
           </View>
         </View>

@@ -88,6 +88,8 @@ export type Booking = {
   url?: string;
   /** Local URI of a photo: the room, the hut, the ticket. */
   imageUri?: string;
+  /** Where the photo lives in Supabase Storage ("<user id>/<file>"), once uploaded. */
+  imagePath?: string;
   /** Set once a timed event for this booking exists in Google Calendar. */
   googleEventId?: string;
 };
@@ -101,6 +103,8 @@ export type TripStop = {
   scan?: TripScan;
   /** Local URI of the screenshot that was scanned, shown as a polaroid on Home. */
   sourceImageUri?: string;
+  /** The same screenshot in Supabase Storage, once uploaded. */
+  sourceImagePath?: string;
   /** ISO calendar date (YYYY-MM-DD), inclusive. */
   startDate: string;
   /** Number of nights. The stop ends on startDate + nights. */
@@ -123,6 +127,8 @@ export type Trip = {
   createdAt: string;
   /** Set when the trip was opened from a friend's share link. */
   mirroredFrom?: string;
+  /** When this trip last changed on any device; the newer copy wins when syncing. */
+  updatedAt?: string;
   /** The sharer's imprint pattern, so friends see the trip drawn their way. */
   imprintPattern?: 'silk' | 'rings' | 'cells' | 'canopy';
 };

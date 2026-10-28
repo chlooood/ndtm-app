@@ -5,6 +5,7 @@ import { Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 
 import { T } from '@/components/ui/Text';
+import { usePhoto } from '@/lib/sync/usePhoto';
 import { formatClock, formatDayLabel } from '@/lib/dates';
 import type { Booking, TransportMode } from '@/lib/trips/types';
 
@@ -68,11 +69,12 @@ export function TransportCard({ booking }: { booking: Booking }) {
 
 /** A hostel, hotel or hut: photo (or a painted placeholder), dates, address and reference. */
 export function StayCard({ booking, night }: { booking: Booking; night?: { index: number; total: number } }) {
+  const photo = usePhoto(booking.imageUri, booking.imagePath);
   return (
     <Pressable onPress={() => open(booking.url)} disabled={!booking.url} className="overflow-hidden rounded-2xl border border-line bg-card active:opacity-90">
       <View style={{ height: 120 }}>
-        {booking.imageUri ? (
-          <Image source={{ uri: booking.imageUri }} contentFit="cover" style={{ width: '100%', height: '100%' }} />
+        {photo ? (
+          <Image source={{ uri: photo }} contentFit="cover" style={{ width: '100%', height: '100%' }} />
         ) : (
           <StayIllustration />
         )}
@@ -100,10 +102,11 @@ export function StayCard({ booking, night }: { booking: Booking; night?: { index
 
 /** A tour, gig, museum slot or table booking. */
 export function ActivityCard({ booking }: { booking: Booking }) {
+  const photo = usePhoto(booking.imageUri, booking.imagePath);
   return (
     <Pressable onPress={() => open(booking.url)} disabled={!booking.url} className="flex-row items-center gap-3 rounded-2xl border border-line bg-card p-3 active:opacity-80">
-      {booking.imageUri ? (
-        <Image source={{ uri: booking.imageUri }} contentFit="cover" style={{ width: 52, height: 52, borderRadius: 12 }} />
+      {photo ? (
+        <Image source={{ uri: photo }} contentFit="cover" style={{ width: 52, height: 52, borderRadius: 12 }} />
       ) : (
         <View className="h-[52px] w-[52px] items-center justify-center rounded-xl bg-blush">
           <Text className="text-[22px]">🎟</Text>

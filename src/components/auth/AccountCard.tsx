@@ -4,10 +4,19 @@ import { Alert, View } from 'react-native';
 import { Button } from '@/components/ui/Button';
 import { T } from '@/components/ui/Text';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { useTrips } from '@/lib/trips/store';
+
+const SYNC_LABEL = {
+  off: 'Trips on this device only',
+  syncing: 'Syncing trips…',
+  synced: 'Trips and photos synced',
+  error: 'Sync paused, retrying on your next change',
+} as const;
 
 /** Google account status, with sign in and sign out. */
 export function AccountCard() {
   const auth = useAuth();
+  const { syncStatus } = useTrips();
   const signIn = () => auth.signIn().catch((e: Error) => Alert.alert('Sign-in failed', e.message));
 
   return (
@@ -27,7 +36,9 @@ export function AccountCard() {
             )}
             <View className="flex-1">
               <T variant="heading">{auth.account.name ?? auth.account.email}</T>
-              <T variant="small">{auth.account.email} · Calendar connected</T>
+              <T variant="small">
+                {auth.account.email} · Calendar connected · {SYNC_LABEL[syncStatus]}
+              </T>
             </View>
           </View>
           <Button label="Sign out" kind="quiet" onPress={() => void auth.signOut()} />
