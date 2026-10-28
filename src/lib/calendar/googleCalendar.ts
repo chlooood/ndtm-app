@@ -1,6 +1,6 @@
 import { addDays, formatClock, formatDayLabel, stopDays } from '@/lib/dates';
 import { createTripShareUrl } from '@/lib/linking/shareTrip';
-import type { BookingLink, CalendarNote, Trip, TripStop } from '@/lib/trips/types';
+import type { Booking, BookingLink, CalendarNote, Trip, TripStop } from '@/lib/trips/types';
 
 /**
  * The subset of the Google Calendar v3 Event resource that ndtm writes.
@@ -39,6 +39,20 @@ function timelineLine(item: TripStop['timeline'][number]): string {
     : `${formatClock(item.time)} · ${escapeHtml(item.name)} (${item.category})`;
 }
 
+const MODE_ICON = { train: '🚆', flight: '✈️', bus: '🚌', car: '🚗', ferry: '⛴' } as const;
+const KIND_ICON = { stay: '🛏', transport: '🚆', activity: '🎟' } as const;
+
+/** "🚆 TGV 6201 Lyon → Paris · Fri 30 Oct 08:04 · ref QX7P2M" */
+function bookingLine(b: Booking): string {
+  const icon = b.kind === 'transport' && b.transportMode ? MODE_ICON[b.transportMode] : KIND_ICON[b.kind];
+  const when = `${formatDayLabel(b.start.slice(0, 10))} ${b.start.slice(11, 16)}${b.end ? ` → ${b.end.slice(11, 16)}` : ''}`;
+  const parts = [`${icon} ${escapeHtml(b.title)}`, when];
+  if (b.provider) parts.push(escapeHtml(b.provider));
+  if (b.confirmation) parts.push(`ref <b>${escapeHtml(b.confirmation)}</b>`);
+  const line = parts.join(' · ');
+  return b.url ? `<a href="${escapeHtml(b.url)}">${line}</a>` : line;
+}
+
 /**
  * Builds the event description. Google Calendar renders a small HTML subset,
  * so booking pages appear as tappable links. Payment always happens on the
@@ -60,6 +74,10 @@ export function buildEventDescription(stop: TripStop, shareUrl: string): string 
       lines.push(dayHeading(day), ...stop.timeline.filter((i) => i.date === day).map((i) => `• ${timelineLine(i)}`));
     }
     lines.push('');
+  }
+
+  if (stop.bookings?.length) {
+    lines.push('<b>Booked</b>', ...stop.bookings.map((b) => `• ${bookingLine(b)}`), '');
   }
 
   const sections: [string, BookingLink['kind'][]][] = [
@@ -125,36 +143,8 @@ export function stopToCalendarEvent(trip: Trip, stop: TripStop): GoogleCalendarE
   };
 }
 
-export function tripToCalendarEvents(trip: Trip): GoogleCalendarEvent[] {
-  return trip.stops.map((stop) => stopToCalendarEvent(trip, stop));
-}
-
 const eventsEndpoint = (calendarId: string) =>
   `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
-
-/**
- * Inserts every stop as an all-day event. `accessToken` is a Google OAuth
- * token with the https://www.googleapis.com/auth/calendar.events scope
- * (obtain it with expo-auth-session or @react-native-google-signin).
- * Returns the created ids in stop order; store them as stop.googleEventId.
- */
-export async function insertTripIntoGoogleCalendar(
-  trip: Trip,
-  accessToken: string,
-  calendarId = 'primary',
-): Promise<{ id: string; htmlLink: string }[]> {
-  const created: { id: string; htmlLink: string }[] = [];
-  for (const event of tripToCalendarEvents(trip)) {
-    const res = await fetch(eventsEndpoint(calendarId), {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(event),
-    });
-    if (!res.ok) throw new Error(`Google Calendar rejected "${event.summary}" (${res.status}): ${await res.text()}`);
-    created.push((await res.json()) as { id: string; htmlLink: string });
-  }
-  return created;
-}
 
 /**
  * [ + Save as Note ] for a stop that is already in Google Calendar: reads the
@@ -180,4 +170,62 @@ export async function appendNoteToGoogleEvent(
     body: JSON.stringify({ description: appendLineToDescription(description, note.date, note.text) }),
   });
   if (!res.ok) throw new Error(`Could not update the calendar event (${res.status}): ${await res.text()}`);
+}
+
+/** The phone's time zone, used for timed events. Trip times are entered as local wall-clock times. */
+const deviceTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Paris';
+
+/** A timed event for a train, flight or tour, so it shows at its hour in the calendar. */
+export function bookingToCalendarEvent(trip: Trip, stop: TripStop, b: Booking) {
+  const end = b.end ?? `${b.start.slice(0, 11)}${String(Math.min(23, Number(b.start.slice(11, 13)) + 2)).padStart(2, '0')}${b.start.slice(13)}`;
+  const timeZone = deviceTimeZone();
+  return {
+    summary: `${b.kind === 'transport' && b.transportMode ? MODE_ICON[b.transportMode] : KIND_ICON[b.kind]} ${b.title}`,
+    location: b.address ?? `${stop.place.name}, ${stop.place.region}`,
+    description: [b.provider, b.confirmation ? `Booking reference: <b>${escapeHtml(b.confirmation)}</b>` : '', b.url ? `<a href="${escapeHtml(b.url)}">Open booking</a>` : '']
+      .filter(Boolean)
+      .join('<br>'),
+    start: { dateTime: `${b.start}:00`, timeZone },
+    end: { dateTime: `${end}:00`, timeZone },
+    extendedProperties: { private: { ndtmTripId: trip.id, ndtmStopId: stop.id, ndtmBookingId: b.id } },
+    reminders: { useDefault: false, overrides: [{ method: 'popup' as const, minutes: b.kind === 'transport' ? 90 : 30 }] },
+  };
+}
+
+/**
+ * Writes the whole trip to Google Calendar: one all-day event per leg (with
+ * links, bookings and the day-by-day timeline in the description) and a timed
+ * event per train, flight or tour. Events ndtm created before are updated in
+ * place, so syncing twice never duplicates anything. Stays are covered by the
+ * leg's all-day event.
+ */
+export async function syncTripToGoogleCalendar(
+  trip: Trip,
+  accessToken: string,
+  calendarId = 'primary',
+): Promise<{ stops: Record<string, string>; bookings: Record<string, string> }> {
+  const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+  const upsert = async (existingId: string | undefined, body: object, label: string): Promise<string> => {
+    const url = existingId ? `${eventsEndpoint(calendarId)}/${encodeURIComponent(existingId)}` : eventsEndpoint(calendarId);
+    let res = await fetch(url, { method: existingId ? 'PATCH' : 'POST', headers, body: JSON.stringify(body) });
+    // The event was deleted in Google Calendar: make a new one.
+    if (existingId && (res.status === 404 || res.status === 410)) {
+      res = await fetch(eventsEndpoint(calendarId), { method: 'POST', headers, body: JSON.stringify(body) });
+    }
+    if (res.status === 401) throw new Error('Google sign-in expired. Sign in again to sync.');
+    if (!res.ok) throw new Error(`Google Calendar rejected "${label}" (${res.status}): ${await res.text()}`);
+    return ((await res.json()) as { id: string }).id;
+  };
+
+  const ids = { stops: {} as Record<string, string>, bookings: {} as Record<string, string> };
+  for (const stop of trip.stops) {
+    const event = stopToCalendarEvent(trip, stop);
+    ids.stops[stop.id] = await upsert(stop.googleEventId, event, event.summary);
+    for (const b of stop.bookings ?? []) {
+      if (b.kind === 'stay') continue;
+      const timed = bookingToCalendarEvent(trip, stop, b);
+      ids.bookings[b.id] = await upsert(b.googleEventId, timed, timed.summary);
+    }
+  }
+  return ids;
 }

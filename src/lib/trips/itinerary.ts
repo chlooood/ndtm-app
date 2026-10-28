@@ -3,9 +3,10 @@
 
 import * as Crypto from 'expo-crypto';
 
-import { addDays, formatClock, nextFriday, stopDays } from '@/lib/dates';
+import { addDays, daysBetween as daysApart, formatClock, nextFriday, stopDays } from '@/lib/dates';
 import { DEFAULT_ROUTING, planLogistics, type RoutingContext } from '@/lib/logistics/routing';
 import type { ScanResponse } from '@/lib/scanner/schema';
+import type { ParsedNoteNode } from '@/lib/scanner/textIngest';
 import type { LifestyleSpot, ManualSpotInput, SpotAction, SpotActionResult } from '@/lib/spots/types';
 import type { AccommodationType, ClockTime, PlaceRef, TimelineItem, Trip, TripStop } from '@/lib/trips/types';
 
@@ -201,4 +202,77 @@ export function defaultTimeFor(category: LifestyleSpot['category']): ClockTime {
       monument: '10:30',
     } as const
   )[category];
+}
+
+/* ---------- Pasted notes ---------- */
+
+const NOTE_CATEGORY: Record<ParsedNoteNode['activityType'], LifestyleSpot['category']> = {
+  clubbing: 'club',
+  beach: 'beach',
+  restaurant: 'restaurant',
+  alpine_backpacking: 'landmark',
+  general: 'landmark',
+};
+
+/** [ 📌 Scatter ]: every place in the notes becomes its own spot, unattached to any trip. */
+export function spotsFromNotes(nodes: ParsedNoteNode[]): LifestyleSpot[] {
+  return nodes.map((n) => ({
+    id: Crypto.randomUUID(),
+    name: n.placeName,
+    category: NOTE_CATEGORY[n.activityType],
+    city: n.inferredRegion,
+    place: { name: n.placeName, region: n.inferredRegion },
+    source: { type: 'notes' },
+    createdAt: new Date().toISOString(),
+  }));
+}
+
+/**
+ * [ 🔗 Assemble ]: chains the notes' cities into a trip, one leg per city in
+ * the order they appear. Dates in the notes set each leg's start and length;
+ * without dates a leg gets two nights. Each venue lands on its leg's timeline
+ * at its date (or the leg's first day) and a sensible default time.
+ */
+export function tripFromNotes(nodes: ParsedNoteNode[], ctx: RoutingContext = DEFAULT_ROUTING, accommodation: AccommodationType = 'hut'): Trip {
+  const groups: { region: string; nodes: ParsedNoteNode[] }[] = [];
+  for (const n of nodes) {
+    const key = n.inferredRegion.trim().toLowerCase();
+    const g = groups.find((x) => x.region.trim().toLowerCase() === key);
+    if (g) g.nodes.push(n);
+    else groups.push({ region: n.inferredRegion.trim(), nodes: [n] });
+  }
+  const firstDate = (g: (typeof groups)[number]) => g.nodes.map((n) => n.inferredDate).filter(Boolean).sort()[0];
+
+  const stops: TripStop[] = groups.map((g, i) => {
+    const start = firstDate(g) ?? (i === 0 ? nextFriday() : undefined);
+    const nextStart = groups[i + 1] ? firstDate(groups[i + 1]) : undefined;
+    const lastDate = g.nodes.map((n) => n.inferredDate).filter(Boolean).sort().at(-1);
+    const nights = start && nextStart ? Math.max(1, daysApart(start, nextStart)) : start && lastDate && lastDate > start ? daysApart(start, lastDate) + 1 : DEFAULT_NIGHTS;
+    const alpine = g.nodes.some((n) => n.activityType === 'alpine_backpacking');
+    const place: PlaceRef = { name: g.region, region: g.region };
+    return {
+      id: Crypto.randomUUID(),
+      kind: alpine ? 'alpine' : 'city',
+      place,
+      startDate: start ?? nextFriday(),
+      nights,
+      accommodation: alpine ? accommodation : undefined,
+      logistics: planLogistics({ kind: alpine ? 'alpine' : 'city', place, accommodation }, ctx),
+      timeline: [],
+    };
+  });
+
+  // Chain the dates, then drop each venue onto its leg.
+  const chained = rechain(stops, ctx);
+  chained.forEach((stop, i) => {
+    const days = new Set(stopDays(stop.startDate, stop.nights));
+    for (const n of groups[i].nodes) {
+      if (n.placeName.trim().toLowerCase() === groups[i].region.trim().toLowerCase()) continue; // just the city
+      const spot = spotsFromNotes([n])[0];
+      const date = n.inferredDate && days.has(n.inferredDate) ? n.inferredDate : stop.startDate;
+      stop.timeline = insertTimelineItem(stop.timeline, venueNode(Crypto.randomUUID(), spot, date, defaultTimeFor(spot.category)));
+    }
+  });
+
+  return { ...newTrip(groups.map((g) => g.region).join(' → ')), stops: chained };
 }

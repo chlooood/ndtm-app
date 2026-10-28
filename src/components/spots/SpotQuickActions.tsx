@@ -8,6 +8,8 @@ import { T } from '@/components/ui/Text';
 import { addDays, formatClock, formatDayLabel, nextFriday, shiftClock } from '@/lib/dates';
 import type { LifestyleSpot, SpotAction, SpotActionResult, SpotActionType } from '@/lib/spots/types';
 import { defaultNoteText, defaultTimeFor, tripDays } from '@/lib/trips/itinerary';
+import { useAuth } from '@/lib/auth/AuthContext';
+import { appendNoteToGoogleEvent } from '@/lib/calendar/googleCalendar';
 import { useTrips } from '@/lib/trips/store';
 import type { ClockTime } from '@/lib/trips/types';
 
@@ -26,6 +28,7 @@ type Props = {
 /** The three quick actions for a scanned or typed-in venue. Picking one reveals only the inputs it needs. */
 export function SpotQuickActions({ spot, onDone }: Props) {
   const { activeTrip, runSpotAction } = useTrips();
+  const auth = useAuth();
   const days = tripDays(activeTrip);
   const hasTrip = days.length > 0;
 
@@ -60,6 +63,14 @@ export function SpotQuickActions({ spot, onDone }: Props) {
       return;
     }
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // If this leg is already in Google Calendar, append the note there too.
+    const stop = result.trip.stops.find((s) => s.id === result.stopId);
+    if (action.type === 'append_note' && stop?.googleEventId && auth.account) {
+      void auth
+        .calendarToken()
+        .then((token) => (token ? appendNoteToGoogleEvent(token, stop.googleEventId!, { date: action.date, text: action.text }) : undefined))
+        .catch((e: Error) => console.warn('Note saved in ndtm but not in Google Calendar:', e.message));
+    }
     onDone(result);
   };
 

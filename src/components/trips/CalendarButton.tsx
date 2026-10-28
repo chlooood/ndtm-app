@@ -1,28 +1,51 @@
+import { useState } from 'react';
 import { Alert } from 'react-native';
 
 import { Button } from '@/components/ui/Button';
-import { tripToCalendarEvents } from '@/lib/calendar/googleCalendar';
+import { useAuth } from '@/lib/auth/AuthContext';
+import { syncTripToGoogleCalendar } from '@/lib/calendar/googleCalendar';
+import { useTrips } from '@/lib/trips/store';
 import type { Trip } from '@/lib/trips/types';
 
 /**
- * Builds the trip's Google Calendar events: one all-day event per leg, with
- * booking links and every stacked spot and note in a per-day timeline.
+ * Writes the trip into Google Calendar: one all-day event per leg with booking
+ * links and the day's timeline, and timed events for trains and tours. Asks
+ * you to sign in with Google first if you haven't.
  */
 export function CalendarButton({ trip, kind = 'secondary' }: { trip: Trip; kind?: 'primary' | 'secondary' }) {
+  const auth = useAuth();
+  const { recordGoogleEvents } = useTrips();
+  const [busy, setBusy] = useState(false);
+  const synced = trip.stops.length > 0 && trip.stops.every((s) => s.googleEventId);
+
+  const run = async () => {
+    if (!auth.configured) {
+      Alert.alert('Google sign-in isn’t set up', 'Add your Google client IDs to .env.local (see README) to sync with Google Calendar.');
+      return;
+    }
+    setBusy(true);
+    try {
+      if (!auth.account) await auth.signIn();
+      const token = await auth.calendarToken();
+      // On web, sign-in navigates away and the sync runs when you tap again.
+      if (!token) return;
+      const ids = await syncTripToGoogleCalendar(trip, token);
+      recordGoogleEvents(trip.id, ids);
+      const n = Object.keys(ids.stops).length + Object.keys(ids.bookings).length;
+      Alert.alert('In your Google Calendar', `${n} event${n === 1 ? '' : 's'} ${synced ? 'updated' : 'added'} for ${trip.title}.`);
+    } catch (error) {
+      Alert.alert('Couldn’t sync', error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Button
-      label="Add to Google Calendar"
+      label={busy ? 'Syncing…' : synced ? 'Update Google Calendar' : auth.account ? 'Add to Google Calendar' : 'Sign in & add to Google Calendar'}
       kind={kind}
-      disabled={trip.stops.length === 0}
-      onPress={() => {
-        const events = tripToCalendarEvents(trip);
-        // TODO: get an OAuth token with the calendar.events scope (expo-auth-session),
-        // call insertTripIntoGoogleCalendar(), and store each id as stop.googleEventId.
-        Alert.alert(
-          'Google Calendar',
-          `${events.length} all-day event${events.length === 1 ? '' : 's'} ready, with booking links and each day's timeline in the description. Connect Google sign-in to send them.`,
-        );
-      }}
+      disabled={busy || trip.stops.length === 0}
+      onPress={() => void run()}
     />
   );
 }

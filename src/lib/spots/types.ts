@@ -47,7 +47,7 @@ export type LifestyleSpot = {
   /** City name, e.g. "Ibiza" or "Lyon". Used to build a new trip around the spot. */
   city: string;
   place: PlaceRef;
-  source: { type: 'scan'; platform: SourcePlatform; context: string } | { type: 'manual' };
+  source: { type: 'scan'; platform: SourcePlatform; context: string } | { type: 'manual' } | { type: 'notes' };
   createdAt: string;
 };
 

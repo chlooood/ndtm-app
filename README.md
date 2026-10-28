@@ -28,21 +28,31 @@ Trip planner for exchange students in Lyon: screenshot a Reel, TikTok or trail p
 
 ```bash
 npm install
-cp .env.example .env.local        # fill in your Supabase URL + anon key
+cp .env.example .env.local        # fill in Supabase + Google values (below)
 npx supabase link --project-ref <ref>
-npx supabase db push              # trips table + private `scans` bucket
+npx supabase db push              # trips table, scans bucket, imprint column
 npx supabase secrets set ANTHROPIC_API_KEY=... GOOGLE_PLACES_API_KEY=...
 npx supabase functions deploy scan-trip
-npx expo start
+npx supabase functions deploy parse-notes
+npx expo start --web              # web works without a native build
 ```
 
 `GOOGLE_PLACES_API_KEY` is optional. Without it, coordinates come from Claude alone and the result is tagged "Approximate".
+
+### Google sign-in and Calendar
+
+1. In Google Cloud, create a project, enable the **Google Calendar API**, and set up the OAuth consent screen with the `calendar.events` scope. While the app is in "Testing", add yourself as a test user; no Google review is needed for up to 100 test users.
+2. Create OAuth client IDs: **Web** (its ID is `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`), **iOS** (bundle `com.ndtm.app`; its ID is `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, its reversed ID is `GOOGLE_IOS_URL_SCHEME`) and **Android** (package `com.ndtm.app` plus your signing certificate's SHA-1).
+3. In Supabase → Authentication → Providers → Google, paste the Web client ID and secret, and add the iOS and Android client IDs as authorized client IDs.
+4. Native sign-in needs a development build, since Expo Go can't load it: `npx expo run:ios` / `npx expo run:android`, or `npx eas-cli build --profile development`.
 
 ## How a scan flows
 
 1. `pickScanImage` (expo-image-picker) → `uploadScanImage` puts the file in Supabase Storage.
 2. `parseTripFromImage` invokes `supabase/functions/scan-trip`, which sends the image to Claude (`claude-opus-5-5`, structured outputs) and re-geocodes with Google Places.
 3. The response is validated against `TripScanSchema` (`supabase/functions/_shared/tripScan.ts`, shared by app and worker).
-4. `planLogistics` routes `city` trips to rail and hostel links; `alpine_backpacking` trips go through `flagTransitUnfeasible`, which uses Google Maps driving, BlaBlaCar and hut booking instead.
+4. `lib/logistics/tailoredEngine.ts` turns it into a leg using your profile: city legs get rail and hostel links; alpine legs follow your hut or tent choice and region (transit to the trailhead in Europe, Google Maps driving in North America).
 
-Share links look like `ndtm://trip/<id>` and open `src/app/trip/[id].tsx`.
+Pasted notes go through `supabase/functions/parse-notes` the same way, then become a chained trip or loose scrapbook cards.
+
+Share links look like `ndtm://trip/<id>` and open `src/app/trip/[id].tsx`, drawn in the sharer's imprint pattern.

@@ -64,6 +64,34 @@ export type CalendarNote = {
 
 export type TimelineItem = TimedNode | CalendarNote;
 
+export type BookingKind = 'stay' | 'transport' | 'activity';
+export type TransportMode = 'train' | 'flight' | 'bus' | 'car' | 'ferry';
+
+/**
+ * Something already booked on an external site: a hostel, a train, a hut, a
+ * tour. ndtm never takes payment; it keeps the details in one place and
+ * writes them into the calendar.
+ */
+export type Booking = {
+  id: string;
+  kind: BookingKind;
+  /** "Generator Barcelona", "TGV 6201 Lyon → Paris", "Refuge du Lac Blanc". */
+  title: string;
+  provider?: string;
+  transportMode?: TransportMode;
+  /** Local date-time, "YYYY-MM-DDTHH:MM". Check-in time for stays, departure for transport. */
+  start: string;
+  /** Check-out or arrival, same format. */
+  end?: string;
+  confirmation?: string;
+  address?: string;
+  url?: string;
+  /** Local URI of a photo: the room, the hut, the ticket. */
+  imageUri?: string;
+  /** Set once a timed event for this booking exists in Google Calendar. */
+  googleEventId?: string;
+};
+
 /** One leg of a trip: a city weekend or an alpine route. */
 export type TripStop = {
   id: string;
@@ -82,6 +110,8 @@ export type TripStop = {
   logistics: Logistics;
   /** Venues and notes, kept sorted by date then time. */
   timeline: TimelineItem[];
+  /** Hostels, trains, huts and tours booked for this leg. */
+  bookings?: Booking[];
   /** Set once the stop has been written to Google Calendar, so notes can be appended to it. */
   googleEventId?: string;
 };
@@ -93,4 +123,6 @@ export type Trip = {
   createdAt: string;
   /** Set when the trip was opened from a friend's share link. */
   mirroredFrom?: string;
+  /** The sharer's imprint pattern, so friends see the trip drawn their way. */
+  imprintPattern?: 'silk' | 'rings' | 'cells' | 'canopy';
 };

@@ -6,6 +6,6 @@ module.exports = defineConfig([
   expoConfig,
   {
     // Deno code (npm:/jsr: specifiers) is linted by `deno lint`, not the app's ESLint.
-    ignores: ['dist/*', 'supabase/functions/scan-trip/*'],
+    ignores: ['dist/*', 'supabase/functions/scan-trip/*', 'supabase/functions/parse-notes/*'],
   },
 ]);

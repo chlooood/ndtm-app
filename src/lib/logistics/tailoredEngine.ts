@@ -10,7 +10,7 @@
 
 import { resolveBase } from '@/lib/logistics/passes';
 import type { RoutingContext } from '@/lib/logistics/routing';
-import type { HikingStyle, UserProfile } from '@/lib/profile/ProfileContext';
+import { activeHub, HUB_INFO, type HikingStyle, type UserProfile } from '@/lib/profile/ProfileContext';
 import type { ScanResponse } from '@/lib/scanner/schema';
 import { buildPackGrid, type DailyForecast, type PackGroup } from '@/lib/trips/alpine';
 import { stopFromScan } from '@/lib/trips/itinerary';
@@ -29,8 +29,9 @@ export type TailoredItinerary = {
 
 export const accommodationFor = (style: HikingStyle): AccommodationType => (style === 'WILD_CAMPING' ? 'tent' : 'hut');
 
+/** Trips start from the active hub: home, or the exchange you're planning ahead for. */
 export function routingFromProfile(profile: UserProfile): RoutingContext {
-  return { origin: resolveBase(profile.baseLocation), passes: profile.transitPasses };
+  return { origin: resolveBase(HUB_INFO[activeHub(profile)].location), passes: profile.transitPasses };
 }
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

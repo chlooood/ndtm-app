@@ -2,6 +2,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, View } from 'react-native';
 
+import { ImprintMap } from '@/components/imprint/ImprintMap';
+import { useImprintPlaces } from '@/components/imprint/useImprintPlaces';
 import { StopCard } from '@/components/trips/StopCard';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
@@ -33,6 +35,8 @@ export default function SharedTripScreen() {
 
   const alreadySaved = trips.some((t) => t.id === id);
   const trip = state.trip;
+  // The friend's trip, drawn in the pattern they chose.
+  const places = useImprintPlaces(trip ? [trip] : []);
 
   return (
     <Screen world="home" eyebrow="Shared with you" title={trip?.title ?? 'Shared trip'} corners={false}>
@@ -49,6 +53,11 @@ export default function SharedTripScreen() {
         </View>
       ) : (
         <ScrollView contentContainerClassName="gap-4 px-5 pb-16">
+          {places.length > 0 && (
+            <View className="overflow-hidden rounded-[22px] border border-line">
+              <ImprintMap places={places.map((p) => ({ ...p, been: true }))} pattern={trip.imprintPattern ?? 'silk'} width={340} height={300} />
+            </View>
+          )}
           {trip.stops.map((stop, i) => (
             <StopCard key={stop.id} stop={stop} index={i} />
           ))}

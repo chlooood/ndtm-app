@@ -10,6 +10,7 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { PALETTES } from '@/components/ui/theme';
+import { AuthProvider } from '@/lib/auth/AuthContext';
 import { ProfileProvider } from '@/lib/profile/ProfileContext';
 import { TripsProvider } from '@/lib/trips/store';
 
@@ -53,17 +54,21 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={theme}>
-      <ProfileProvider>
-        <TripsProvider>
+      <AuthProvider>
+        <ProfileProvider>
+          <TripsProvider>
           <Stack screenOptions={{ contentStyle: { backgroundColor: home.paper }, headerShown: false }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="index" />
+            <Stack.Screen name="onboarding" options={{ animation: 'fade', gestureEnabled: false }} />
             <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
             <Stack.Screen name="friends" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="imprint" options={{ presentation: 'modal' }} />
             <Stack.Screen name="trip/[id]" options={{ presentation: 'modal' }} />
           </Stack>
-        </TripsProvider>
-      </ProfileProvider>
+          </TripsProvider>
+        </ProfileProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

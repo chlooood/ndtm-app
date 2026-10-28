@@ -1,17 +1,26 @@
-import { createContext, type ReactNode, use, useCallback, useMemo, useRef, useState } from 'react';
+import * as Crypto from 'expo-crypto';
+import { createContext, type ReactNode, use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { generateTailoredItinerary, routingFromProfile } from '@/lib/logistics/tailoredEngine';
 import { useProfile } from '@/lib/profile/ProfileContext';
+import { computeStats } from '@/lib/profile/stats';
 import type { ScanResponse } from '@/lib/scanner/schema';
 import type { LifestyleSpot, SpotAction, SpotActionResult } from '@/lib/spots/types';
-import { applySpotAction, newTrip, rechain, type TripsState } from '@/lib/trips/itinerary';
+import { accommodationFor, generateTailoredItinerary, routingFromProfile } from '@/lib/logistics/tailoredEngine';
+import type { ParsedNoteNode } from '@/lib/scanner/textIngest';
+import { applySpotAction, newTrip, rechain, spotsFromNotes, tripFromNotes, type TripsState } from '@/lib/trips/itinerary';
 import { publishTrip } from '@/lib/trips/repository';
-import type { AccommodationType, Trip, TripStop } from '@/lib/trips/types';
+import { readJSON, writeJSON } from '@/lib/storage';
+import type { AccommodationType, Booking, Trip, TripStop } from '@/lib/trips/types';
 
-// In-memory for now. Swap the useState below for expo-sqlite/kv-store
-// (or Supabase Auth + a per-user table) to keep trips across launches.
+// Trips and spots are saved on the device (lib/storage.ts) after every
+// change, so a plan survives restarts. Shared trips also live in Supabase.
 
 type State = TripsState & { spots: LifestyleSpot[] };
+
+/** Event ids Google Calendar returned, keyed by stop and by booking. */
+export type GoogleEventIds = { stops: Record<string, string>; bookings: Record<string, string> };
+
+const STORAGE_KEY = 'ndtm.trips.v1';
 
 type TripsContextValue = {
   trips: Trip[];
@@ -33,11 +42,24 @@ type TripsContextValue = {
   publishActiveTrip: () => Promise<{ trip: Trip; publishError: string | null }>;
   /** Copies a friend's shared trip into your trips. */
   mirrorTrip: (trip: Trip) => void;
+  /** Adds a booking (stay, train, tour…) to a leg of the active trip. */
+  addBooking: (stopId: string, booking: Omit<Booking, 'id'>) => void;
+  removeBooking: (stopId: string, bookingId: string) => void;
+  /** Remembers which Google Calendar events belong to which legs and bookings, so syncing again updates instead of duplicating. */
+  recordGoogleEvents: (tripId: string, ids: GoogleEventIds) => void;
+  /** Pasted notes → a new active trip, one leg per city in order, venues on each leg's timeline. */
+  assembleFromNotes: (nodes: ParsedNoteNode[]) => Trip;
+  /** Pasted notes → independent spots scattered on Home, not tied to any trip. */
+  scatterFromNotes: (nodes: ParsedNoteNode[]) => LifestyleSpot[];
 };
 
 const TripsContext = createContext<TripsContextValue | null>(null);
 
 function initialState(): State {
+  const saved = readJSON<State>(STORAGE_KEY);
+  if (saved && saved.trips?.length && saved.trips.some((t) => t.id === saved.activeTripId)) {
+    return { ...saved, spots: saved.spots ?? [] };
+  }
   const trip = newTrip();
   return { trips: [trip], activeTripId: trip.id, spots: [] };
 }
@@ -47,13 +69,23 @@ export function TripsProvider({ children }: { children: ReactNode }) {
   // Mirror of the latest state so runSpotAction can return its result
   // synchronously. Every update goes through commit(), which keeps it current.
   const latest = useRef(state);
-  const { profile } = useProfile();
-  // Trips leave from the profile's base and name its rail cards.
+  const { profile, loaded, updateProfile } = useProfile();
+  // Trips leave from the profile's active hub and name its rail cards.
   const ctx = useMemo(() => routingFromProfile(profile), [profile]);
+
+  // Keep the scrapbook counters and season charts in the profile up to date.
+  useEffect(() => {
+    if (!loaded) return;
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const stats = computeStats(state.trips, today);
+    if (JSON.stringify(stats) !== JSON.stringify(profile.stats)) void updateProfile({ stats });
+  }, [state.trips, loaded, profile.stats, updateProfile]);
 
   const commit = useCallback((next: State) => {
     latest.current = next;
     setState(next);
+    writeJSON(STORAGE_KEY, next);
   }, []);
 
   /** Applies `fn` to the active trip's stops and re-chains dates and logistics. */
@@ -114,13 +146,53 @@ export function TripsProvider({ children }: { children: ReactNode }) {
       },
       publishActiveTrip: async () => {
         const s = latest.current;
-        const trip = s.trips.find((t) => t.id === s.activeTripId)!;
+        const trip = { ...s.trips.find((t) => t.id === s.activeTripId)!, imprintPattern: profile.imprintPattern };
         try {
           await publishTrip(trip);
           return { trip, publishError: null };
         } catch (error) {
           return { trip, publishError: error instanceof Error ? error.message : String(error) };
         }
+      },
+      addBooking: (stopId, booking) =>
+        updateStops((stops) =>
+          stops.map((s) =>
+            s.id === stopId
+              ? { ...s, bookings: [...(s.bookings ?? []), { ...booking, id: Crypto.randomUUID() }].sort((a, b) => a.start.localeCompare(b.start)) }
+              : s,
+          ),
+        ),
+      removeBooking: (stopId, bookingId) =>
+        updateStops((stops) => stops.map((s) => (s.id === stopId ? { ...s, bookings: (s.bookings ?? []).filter((b) => b.id !== bookingId) } : s))),
+      recordGoogleEvents: (tripId, ids) => {
+        const s = latest.current;
+        commit({
+          ...s,
+          trips: s.trips.map((t) =>
+            t.id !== tripId
+              ? t
+              : {
+                  ...t,
+                  stops: t.stops.map((stop) => ({
+                    ...stop,
+                    googleEventId: ids.stops[stop.id] ?? stop.googleEventId,
+                    bookings: stop.bookings?.map((b) => ({ ...b, googleEventId: ids.bookings[b.id] ?? b.googleEventId })),
+                  })),
+                },
+          ),
+        });
+      },
+      assembleFromNotes: (nodes) => {
+        const s = latest.current;
+        const trip = tripFromNotes(nodes, ctx, accommodationFor(profile.hikingStyle));
+        commit({ ...s, trips: [trip, ...s.trips.filter((t) => t.stops.length > 0 || t.id !== s.activeTripId)], activeTripId: trip.id });
+        return trip;
+      },
+      scatterFromNotes: (nodes) => {
+        const s = latest.current;
+        const spots = spotsFromNotes(nodes);
+        commit({ ...s, spots: [...spots, ...s.spots] });
+        return spots;
       },
       mirrorTrip: (trip) => {
         const s = latest.current;

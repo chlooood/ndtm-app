@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { CameraIcon, FriendsIcon } from '@/components/ui/Icons';
+import { CameraIcon, FriendsIcon, MapIcon } from '@/components/ui/Icons';
 import { T } from '@/components/ui/Text';
 import { isDark, PALETTES, type World, worldVars } from '@/components/ui/theme';
 
@@ -45,10 +45,10 @@ export function Screen({ world, eyebrow, title, children, corners = true, aside,
   );
 }
 
-/** Camera (scan or upload) top-left, friends (coordinate) top-right. Not part of the tab bar. */
+/** Camera (scan or upload) top-left; your imprint map and friends top-right. Not part of the tab bar. */
 function CornerActions({ world }: { world: World }) {
   const router = useRouter();
-  const go = (href: '/scan' | '/friends') => {
+  const go = (href: '/scan' | '/friends' | '/imprint') => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push(href);
   };
@@ -58,9 +58,14 @@ function CornerActions({ world }: { world: World }) {
       <CornerButton label="Scan a screenshot or add photos" onPress={() => go('/scan')}>
         <CameraIcon color={tint} />
       </CornerButton>
-      <CornerButton label="Friends: coordinate trips" onPress={() => go('/friends')}>
-        <FriendsIcon color={tint} />
-      </CornerButton>
+      <View className="flex-row gap-2">
+        <CornerButton label="Your imprint: the map of everywhere you've been" onPress={() => go('/imprint')}>
+          <MapIcon color={tint} />
+        </CornerButton>
+        <CornerButton label="Friends: coordinate trips" onPress={() => go('/friends')}>
+          <FriendsIcon color={tint} />
+        </CornerButton>
+      </View>
     </View>
   );
 }

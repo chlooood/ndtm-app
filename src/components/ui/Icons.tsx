@@ -36,11 +36,12 @@ export function PhotosIcon({ size = 34, color }: IconProps) {
   );
 }
 
-export function SearchIcon({ size = 18, color }: IconProps) {
+/** A folded paper map: opens your imprint. */
+export function MapIcon({ size = 22, color }: IconProps) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke={color} strokeWidth={2}>
-      <Circle cx={8} cy={8} r={6} />
-      <Path d="m12.5 12.5 4 4" strokeLinecap="round" />
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinejoin="round">
+      <Path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z" />
+      <Path d="M9 4v13.5M15 6.5V20" />
     </Svg>
   );
 }

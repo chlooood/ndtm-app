@@ -1,5 +1,6 @@
 import { ScrollView, View } from 'react-native';
 
+import { AccountCard } from '@/components/auth/AccountCard';
 import { Button } from '@/components/ui/Button';
 import { Screen } from '@/components/ui/Screen';
 import { Tag } from '@/components/ui/Tag';
@@ -16,6 +17,7 @@ export default function FriendsScreen() {
   return (
     <Screen world="home" eyebrow="Coordinate" title="Friends" corners={false}>
       <ScrollView contentContainerClassName="gap-3 px-5 pb-16">
+        <AccountCard />
         <T variant="muted">
           Send a trip’s link and friends open the same itinerary in ndtm, ready to copy into their own trips.
         </T>
