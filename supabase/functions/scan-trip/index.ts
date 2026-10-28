@@ -48,6 +48,8 @@ Fill the schema as follows:
 - sourcePlatform: judge from the interface chrome (TikTok's right-hand action rail, Instagram's Reel or post layout, Reddit's vote arrows, YouTube's player). Use "unknown" for blogs, trail apps, plain photos or when unsure.
 - placesQuery: the text query most likely to find this exact place in Google Places, including the park, town or region.
 - keywords: short lowercase words from the image that matter for planning, such as "hiking", "huts", "refuge", "via ferrata", "tgv", "techno", "rooftop".
+- venueCategory: when the image is about one specific place rather than a whole destination, its category; otherwise "none". A club night in Ibiza is "club"; a beach day at Barceloneta is "beach"; a bouchon in Lyon is "restaurant"; the Pont du Gard is "monument"; a lavender farm is "farm"; the Jardin Majorelle is "garden"; a famous viewpoint, square or building is "landmark".
+- venueCity: the city the venue is in, such as "Barcelona". Use an empty string when venueCategory is "none".
 
 If the image shows no identifiable destination, still answer: give the most likely place and say in extractedContext that the location is a guess.`;
 
@@ -111,7 +113,15 @@ Deno.serve(async (req) => {
 
   const response: ScanResponse = {
     scan: scan.data,
-    meta: { keywords: extraction.keywords, geocoded: place !== null, placeId: place?.placeId ?? null },
+    meta: {
+      keywords: extraction.keywords,
+      geocoded: place !== null,
+      placeId: place?.placeId ?? null,
+      venue:
+        extraction.venueCategory === 'none'
+          ? null
+          : { category: extraction.venueCategory, city: extraction.venueCity || extraction.destinationName },
+    },
   };
   return json(response, 200);
 });

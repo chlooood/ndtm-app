@@ -1,62 +1,124 @@
+import * as Haptics from 'expo-haptics';
 import * as Linking from 'expo-linking';
 import { Pressable, Text, View } from 'react-native';
 
+import { AccommodationSelector } from '@/components/trips/AccommodationSelector';
+import { DayTimeline } from '@/components/trips/DayTimeline';
 import { Tag } from '@/components/ui/Tag';
+import { T } from '@/components/ui/Text';
 import { formatDayRange } from '@/lib/dates';
-import type { TripStop } from '@/lib/trips/types';
+import type { AccommodationType, BookingLink, TripStop } from '@/lib/trips/types';
 
 type Props = {
   stop: TripStop;
   index: number;
-  /** Omit to render read-only (shared trips, saved trips). */
+  /** Omit the callbacks to render read-only (shared trips). */
   onChangeNights?: (nights: number) => void;
   onRemove?: () => void;
+  onChangeAccommodation?: (value: AccommodationType) => void;
+  onRemoveTimelineItem?: (itemId: string) => void;
+  /** On Home the scrapbook page already shows the place, dates and kind. */
+  hideHeader?: boolean;
 };
 
-export function StopCard({ stop, index, onChangeNights, onRemove }: Props) {
-  const { scan, logistics } = stop;
-  const alpine = scan.tripType === 'alpine_backpacking';
+const LINK_GROUPS: [string, BookingLink['kind'][]][] = [
+  ['Getting there', ['transport', 'map']],
+  ['Where to stay', ['lodging']],
+];
+
+/** One leg of the itinerary: dates, how to get there, where to sleep, and its stacked venues. */
+export function StopCard({ stop, index, onChangeNights, onRemove, onChangeAccommodation, onRemoveTimelineItem, hideHeader }: Props) {
+  const { logistics } = stop;
+  const alpine = stop.kind === 'alpine';
+  const tent = alpine && stop.accommodation === 'tent';
 
   return (
-    <View className="rounded-3xl border border-ink-600 bg-ink-800 p-5">
-      <View className="flex-row items-center justify-between">
-        <Text className="font-mono text-xs text-mist-500">
-          {String(index + 1).padStart(2, '0')} · {formatDayRange(stop.startDate, stop.nights)}
-        </Text>
-        <Tag label={alpine ? 'Alpine' : 'City'} tone={alpine ? 'lime' : 'magenta'} />
-      </View>
-      <Text className="mt-2 text-xl font-bold text-mist">{scan.destinationName}</Text>
-      <Text className="text-sm text-mist-400">{scan.estimatedLocation.region}</Text>
-
-      {!logistics.publicTransitFeasible && (
-        <Text className="mt-3 text-sm leading-5 text-neon-amber">🚗 {logistics.reason}</Text>
+    <View className="rounded-[26px] border border-line bg-card p-4">
+      {hideHeader ? (
+        <View className="flex-row">
+          <Tag label={alpine ? (tent ? 'Wild camping' : 'Hut trip') : 'City'} tone={alpine ? 'hike' : 'night'} />
+        </View>
+      ) : (
+        <>
+          <View className="flex-row items-center justify-between">
+            <T variant="mono">
+              {String(index + 1).padStart(2, '0')} · {formatDayRange(stop.startDate, stop.nights)}
+            </T>
+            <Tag label={alpine ? (tent ? 'Wild camping' : 'Hut trip') : 'City'} tone={alpine ? 'hike' : 'night'} />
+          </View>
+          <T variant="title" className="mt-2">
+            {stop.place.name}
+          </T>
+          <T variant="muted">{stop.place.region}</T>
+        </>
       )}
 
-      <View className="mt-3 gap-2">
-        {logistics.links.map((link) => (
-          // openURL (not an in-app browser) so Google Maps or BlaBlaCar can take over if installed.
-          <Pressable key={link.url} accessibilityRole="link" onPress={() => void Linking.openURL(link.url)}>
-            <Text className="text-sm text-neon-cyan">{link.label} ↗</Text>
-          </Pressable>
-        ))}
-      </View>
+      {alpine && onChangeAccommodation && (
+        <View className="mt-4">
+          <AccommodationSelector value={stop.accommodation ?? 'hut'} onChange={onChangeAccommodation} />
+        </View>
+      )}
+
+      {logistics.mode !== 'rail' && (
+        <View className="mt-4 flex-row gap-2 rounded-2xl bg-alert/10 p-3">
+          <Text className="font-sans text-[14px]">{logistics.mode === 'road' ? '🚗' : '🚌'}</Text>
+          <T variant="small" className="flex-1 text-alert">
+            {logistics.reason}
+          </T>
+        </View>
+      )}
+
+      {/* Tent stops have no lodging links at all, so "Where to stay" drops out on its own. */}
+      {LINK_GROUPS.map(([heading, kinds]) => {
+        const links = logistics.links.filter((l) => kinds.includes(l.kind));
+        if (links.length === 0) return null;
+        return (
+          <View key={heading} className="mt-4">
+            <T variant="label">{heading}</T>
+            <View className="mt-1.5 gap-1.5">
+              {links.map((link) => (
+                // openURL (not an in-app browser) so Google Maps or BlaBlaCar can take over if installed.
+                <Pressable
+                  key={link.url}
+                  accessibilityRole="link"
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    void Linking.openURL(link.url);
+                  }}
+                  className="flex-row items-center justify-between rounded-xl bg-chip px-3 py-2.5 active:opacity-70"
+                >
+                  <Text className="flex-1 font-sans-medium text-[14px] text-ink">{link.label}</Text>
+                  <Text className="font-sans text-[14px] text-accent">↗</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        );
+      })}
+
+      {stop.timeline.length > 0 && (
+        <View className="mt-4">
+          <T variant="label">Timeline</T>
+          <DayTimeline items={stop.timeline} onRemove={onRemoveTimelineItem} />
+        </View>
+      )}
 
       {(onChangeNights || onRemove) && (
-        <View className="mt-4 flex-row items-center justify-between border-t border-ink-600 pt-4">
+        <View className="mt-4 flex-row items-center justify-between border-t border-line pt-3">
           {onChangeNights ? (
             <View className="flex-row items-center gap-3">
               <Stepper label="−" onPress={() => onChangeNights(stop.nights - 1)} accessibilityLabel="One night fewer" />
-              <Text className="font-mono text-sm text-mist">
+              <T variant="mono" className="text-ink">
                 {stop.nights} night{stop.nights === 1 ? '' : 's'}
-              </Text>
+              </T>
               <Stepper label="+" onPress={() => onChangeNights(stop.nights + 1)} accessibilityLabel="One more night" />
             </View>
           ) : (
             <View />
           )}
           {onRemove && (
-            <Pressable accessibilityRole="button" onPress={onRemove} className="active:opacity-60">
-              <Text className="text-sm text-mist-500">Remove</Text>
+            <Pressable accessibilityRole="button" onPress={onRemove} hitSlop={8} className="active:opacity-60">
+              <T variant="small">Remove</T>
             </Pressable>
           )}
         </View>
@@ -65,15 +127,18 @@ export function StopCard({ stop, index, onChangeNights, onRemove }: Props) {
   );
 }
 
-function Stepper({ label, onPress, accessibilityLabel }: { label: string; onPress: () => void; accessibilityLabel: string }) {
+export function Stepper({ label, onPress, accessibilityLabel }: { label: string; onPress: () => void; accessibilityLabel: string }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      className="h-8 w-8 items-center justify-center rounded-full border border-ink-600 active:bg-ink-700"
+      onPress={() => {
+        void Haptics.selectionAsync();
+        onPress();
+      }}
+      className="h-8 w-8 items-center justify-center rounded-full border border-line bg-chip active:opacity-70"
     >
-      <Text className="text-base text-mist">{label}</Text>
+      <Text className="font-sans-medium text-[16px] text-ink">{label}</Text>
     </Pressable>
   );
 }

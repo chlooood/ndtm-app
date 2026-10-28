@@ -1,5 +1,7 @@
-// Alpine branch of the pipeline: mountain forecast and a pack list.
+// Alpine branch of the pipeline: mountain forecast and a packing grid.
 // Forecasts come from Open-Meteo, which needs no API key.
+
+import type { AccommodationType } from '@/lib/trips/types';
 
 export type DailyForecast = {
   date: string;
@@ -39,27 +41,48 @@ export async function fetchMountainForecast(lat: number, lng: number): Promise<D
   }));
 }
 
-const BASE_PACK = [
-  'Hut sleeping-bag liner',
-  'Headlamp + spare batteries',
-  'Water (2 L) + filter',
-  'First-aid kit and blister care',
-  'Map / offline GPX + power bank',
-  'Sun cream, sunglasses, cap',
-  'Hut booking confirmation + ID',
-  'Cash for the hut (many are cash only)',
-];
+/** One cell of the packing grid. */
+export type PackGroup = { title: string; items: string[] };
 
-export function buildPackList(forecast: DailyForecast[], nights: number): string[] {
-  const items = [...BASE_PACK];
-  const coldest = Math.min(...forecast.map((d) => d.tempMinC));
-  const wettest = Math.max(...forecast.map((d) => d.precipitationMm));
-  const windiest = Math.max(...forecast.map((d) => d.windMaxKmh));
+/**
+ * Packing grid for an alpine stop. Hut trips pack light (the hut has beds,
+ * blankets and often meals); tent trips carry shelter, sleep system, kitchen
+ * and water treatment. Weather adds items to whichever list applies.
+ * `forecast` may be empty when it hasn't loaded.
+ */
+export function buildPackGrid(accommodation: AccommodationType, forecast: DailyForecast[], nights: number): PackGroup[] {
+  const coldest = forecast.length ? Math.min(...forecast.map((d) => d.tempMinC)) : null;
+  const wettest = forecast.length ? Math.max(...forecast.map((d) => d.precipitationMm)) : 0;
+  const windiest = forecast.length ? Math.max(...forecast.map((d) => d.windMaxKmh)) : 0;
+  const days = nights + 1;
 
-  if (coldest <= 2) items.push('Insulated jacket, gloves and beanie');
-  if (coldest <= -2) items.push('Microspikes (check for ice and snow on the route)');
-  if (wettest >= 2) items.push('Waterproof shell + rain pants', 'Pack liner / dry bags');
-  if (windiest >= 40) items.push('Windproof layer (ridge gusts over 40 km/h)');
-  items.push(`Food for ${nights + 1} days, or check whether the hut does half-board`);
-  return items;
+  const clothing = ['Base layer + spare socks', 'Fleece or light puffy', 'Sun hat, sunglasses, sun cream'];
+  if (coldest !== null && coldest <= 2) clothing.push('Insulated jacket, gloves, beanie');
+  if (wettest >= 2) clothing.push('Waterproof shell + rain pants');
+  if (windiest >= 40) clothing.push(`Windproof layer (gusts to ${Math.round(windiest)} km/h)`);
+
+  const navigation = ['Offline map / GPX', 'Headlamp + spare batteries', 'Power bank', 'First-aid + blister kit'];
+  if (coldest !== null && coldest <= -2) navigation.push('Microspikes (ice on the route)');
+
+  if (accommodation === 'hut') {
+    return [
+      { title: 'Sleep', items: ['Hut sleeping-bag liner (required)', 'Earplugs', 'Hut slippers or light camp shoes'] },
+      { title: 'Food & water', items: ['2 L water', 'Trail snacks', 'Half-board booked? Otherwise lunch for each day'] },
+      { title: 'Clothing', items: clothing },
+      { title: 'Navigation & safety', items: navigation },
+      { title: 'Paperwork', items: ['Hut booking confirmation + ID', 'Cash (many huts are cash only)', 'Alpine club card for member rates'] },
+    ];
+  }
+
+  const sleepingBag =
+    coldest === null ? 'Sleeping bag (check the forecast low)' : `Sleeping bag rated to ${Math.floor(coldest) - 3} °C or lower`;
+  return [
+    { title: 'Shelter', items: ['Tent or bivvy + pegs', 'Groundsheet / footprint', wettest >= 2 ? 'Guy lines pitched taut for rain' : 'Guy lines'] },
+    { title: 'Sleep', items: ['Insulated sleeping pad (R-value 3+)', sleepingBag, 'Inflatable pillow'] },
+    { title: 'Kitchen', items: ['Stove', 'Gas canister (buy on arrival, you can’t fly with one)', 'Pot, spork, lighter', `Dehydrated meals × ${nights}`, `Breakfast + snacks × ${days}`] },
+    { title: 'Water', items: ['Water filter', 'Purification tablets (backup)', '2–3 L capacity', 'Dirty-water bag for the filter'] },
+    { title: 'Clothing', items: clothing },
+    { title: 'Navigation & safety', items: [...navigation, 'Check local bivouac rules: many alpine parks allow a tent only from dusk to dawn'] },
+    { title: 'Leave no trace', items: ['Trowel + toilet bags', 'Rubbish bag (pack it all out)', 'Biodegradable soap'] },
+  ];
 }

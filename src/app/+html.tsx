@@ -28,8 +28,8 @@ export default function Root({ children }: { children: ReactNode }) {
   );
 }
 
-// ndtm is dark-only; match the app background so web never flashes white.
+// Match the app background so web never flashes white.
 const responsiveBackground = `
 body {
-  background-color: #07070B;
+  background-color: #EFE8DA;
 }`;

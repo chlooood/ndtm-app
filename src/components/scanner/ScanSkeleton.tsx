@@ -1,31 +1,20 @@
 import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import { View } from 'react-native';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
-import { NEON_CYAN } from '@/components/ui/theme';
+import { T } from '@/components/ui/Text';
 
-const ANALYZING_STEPS = [
-  'Reading text overlays',
-  'Scanning captions for "hiking", "TGV", "huts"',
-  'Spotting landmarks',
-  'Matching coordinates',
-];
+const ANALYZING_STEPS = ['Reading the caption', 'Looking for “hiking”, “TGV”, “huts”', 'Spotting landmarks', 'Matching coordinates'];
 
-const PREVIEW_HEIGHT = 280;
+const PREVIEW_HEIGHT = 300;
 
 type Props = {
   imageUri: string;
   stage: 'uploading' | 'analyzing';
 };
 
-/** Pulse skeleton with a sweeping scan line while the vision engine works. */
+/** Pulsing skeleton with a scan line sweeping over the screenshot while the vision engine works. */
 export function ScanSkeleton({ imageUri, stage }: Props) {
   const pulse = useSharedValue(0);
   const sweep = useSharedValue(0);
@@ -42,45 +31,39 @@ export function ScanSkeleton({ imageUri, stage }: Props) {
     return () => clearInterval(id);
   }, [stage]);
 
-  const pulseStyle = useAnimatedStyle(() => ({ opacity: 0.35 + pulse.value * 0.45 }));
-  const sweepStyle = useAnimatedStyle(() => ({ transform: [{ translateY: sweep.value * (PREVIEW_HEIGHT - 2) }] }));
+  const pulseStyle = useAnimatedStyle(() => ({ opacity: 0.45 + pulse.value * 0.45 }));
+  const sweepStyle = useAnimatedStyle(() => ({ transform: [{ translateY: sweep.value * (PREVIEW_HEIGHT - 3) }] }));
 
   const label = stage === 'uploading' ? 'Uploading screenshot' : ANALYZING_STEPS[step];
 
   return (
     <View className="flex-1" accessibilityRole="progressbar" accessibilityLabel={label}>
-      <View className="overflow-hidden rounded-[28px] border border-neon-cyan/30 bg-ink-900" style={{ height: PREVIEW_HEIGHT }}>
-        <Image source={{ uri: imageUri }} contentFit="cover" style={{ flex: 1, opacity: 0.55 }} />
+      <View className="overflow-hidden rounded-[26px] bg-ink" style={{ height: PREVIEW_HEIGHT }}>
+        <Image source={{ uri: imageUri }} contentFit="cover" style={{ flex: 1, opacity: 0.7 }} />
         <Animated.View
           pointerEvents="none"
           style={[
-            {
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              height: 2,
-              backgroundColor: NEON_CYAN,
-              shadowColor: NEON_CYAN,
-              shadowOpacity: 1,
-              shadowRadius: 12,
-              shadowOffset: { width: 0, height: 0 },
-            },
+            { position: 'absolute', left: 0, right: 0, height: 3, backgroundColor: '#FFF4D6', shadowColor: '#FFD98A', shadowOpacity: 1, shadowRadius: 14, shadowOffset: { width: 0, height: 0 } },
             sweepStyle,
           ]}
         />
       </View>
 
-      <Text className="mt-6 font-mono text-xs uppercase tracking-[3px] text-neon-cyan">{label}…</Text>
+      <T variant="label" className="mt-5 text-accent">
+        {label}…
+      </T>
 
-      <Animated.View style={pulseStyle} className="mt-4 gap-3">
-        <View className="h-7 w-3/4 rounded-lg bg-ink-700" />
-        <View className="flex-row gap-2">
-          <View className="h-6 w-24 rounded-full bg-ink-700" />
-          <View className="h-6 w-24 rounded-full bg-ink-700" />
-          <View className="h-6 w-16 rounded-full bg-ink-700" />
+      <Animated.View style={pulseStyle}>
+        <View className="mt-4 gap-3">
+          <View className="h-7 w-3/4 rounded-lg bg-chip" />
+          <View className="flex-row gap-2">
+            <View className="h-6 w-24 rounded-full bg-chip" />
+            <View className="h-6 w-24 rounded-full bg-chip" />
+            <View className="h-6 w-16 rounded-full bg-chip" />
+          </View>
+          <View className="h-4 w-full rounded bg-line" />
+          <View className="h-4 w-5/6 rounded bg-line" />
         </View>
-        <View className="h-4 w-full rounded bg-ink-800" />
-        <View className="h-4 w-5/6 rounded bg-ink-800" />
       </Animated.View>
     </View>
   );

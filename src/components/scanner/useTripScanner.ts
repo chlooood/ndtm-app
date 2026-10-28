@@ -1,15 +1,13 @@
 import * as Haptics from 'expo-haptics';
 import { useCallback, useRef, useState } from 'react';
 
-import { planLogistics } from '@/lib/scanner/logistics';
 import { pickScanImage, ScanCancelledError, scanTripFromAsset, type ScanSource } from '@/lib/scanner/scanImage';
 import type { ScanResponse } from '@/lib/scanner/schema';
-import type { Logistics } from '@/lib/trips/types';
 
 export type ScannerState =
   | { status: 'idle' }
   | { status: 'uploading' | 'analyzing'; imageUri: string }
-  | { status: 'result'; imageUri: string; response: ScanResponse; logistics: Logistics }
+  | { status: 'result'; imageUri: string; response: ScanResponse }
   | { status: 'error'; imageUri?: string; message: string };
 
 export function useTripScanner() {
@@ -30,11 +28,8 @@ export function useTripScanner() {
       });
       if (!isCurrent()) return;
 
-      // Alpine scans are flagged here: planLogistics routes them to the
-      // driving/carpool fallback instead of public transit.
-      const logistics = planLogistics(response.scan);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setState({ status: 'result', imageUri: asset.uri, response, logistics });
+      setState({ status: 'result', imageUri: asset.uri, response });
     } catch (error) {
       if (!isCurrent() || error instanceof ScanCancelledError) return;
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);

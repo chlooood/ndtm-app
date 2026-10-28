@@ -7,7 +7,15 @@ import { z } from 'zod';
 export const TRIP_TYPES = ['city', 'alpine_backpacking'] as const;
 export const SOURCE_PLATFORMS = ['instagram', 'tiktok', 'reddit', 'youtube', 'unknown'] as const;
 
+/**
+ * Single places a scan can point at. Night out handles the first five;
+ * Stroll around handles the rest. `none` means the scan is a whole
+ * destination, not one place.
+ */
+export const VENUE_CATEGORIES = ['club', 'bar', 'beach', 'restaurant', 'cafe', 'landmark', 'farm', 'garden', 'monument'] as const;
+
 export type TripType = (typeof TRIP_TYPES)[number];
+export type VenueCategory = (typeof VENUE_CATEGORIES)[number];
 export type SourcePlatform = (typeof SOURCE_PLATFORMS)[number];
 
 /** The strict public payload the vision parser must produce. */
@@ -49,6 +57,10 @@ export const VisionExtractionSchema = z.object({
   placesQuery: z.string(),
   /** Trip-relevant words spotted in overlays or captions ("hiking", "TGV", "huts"). */
   keywords: z.array(z.string()),
+  /** Set when the screenshot is about one venue (a club, beach, restaurant…) rather than a whole destination. */
+  venueCategory: z.enum([...VENUE_CATEGORIES, 'none']),
+  /** The city the venue is in, e.g. "Barcelona". Empty when venueCategory is "none". */
+  venueCity: z.string(),
 });
 
 export type VisionExtraction = z.infer<typeof VisionExtractionSchema>;
@@ -69,6 +81,8 @@ export const ScanResponseSchema = z.object({
     /** True when Google Places confirmed the coordinates. */
     geocoded: z.boolean(),
     placeId: z.string().nullable(),
+    /** Present when the scan is a single venue, which the app offers to the Night out quick actions. */
+    venue: z.object({ category: z.enum(VENUE_CATEGORIES), city: z.string() }).nullable(),
   }),
 });
 

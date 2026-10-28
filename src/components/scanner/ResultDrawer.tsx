@@ -1,118 +1,85 @@
-import { SymbolView } from 'expo-symbols';
-import { useEffect } from 'react';
-import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { scheduleOnRN } from 'react-native-worklets';
+import { useState } from 'react';
+import { Text, View } from 'react-native';
 
-import { INK, NEON_AMBER } from '@/components/ui/theme';
+import { SpotQuickActions } from '@/components/spots/SpotQuickActions';
+import { AccommodationSelector } from '@/components/trips/AccommodationSelector';
+import { BottomSheet } from '@/components/ui/BottomSheet';
+import { Button } from '@/components/ui/Button';
 import { Tag } from '@/components/ui/Tag';
+import { T } from '@/components/ui/Text';
+import { accommodationFor } from '@/lib/logistics/tailoredEngine';
+import { useProfile } from '@/lib/profile/ProfileContext';
 import type { ScanResponse } from '@/lib/scanner/schema';
-import type { Logistics } from '@/lib/trips/types';
+import type { SpotActionResult } from '@/lib/spots/types';
+import { spotFromScan } from '@/lib/trips/itinerary';
+import type { AccommodationType } from '@/lib/trips/types';
 
 type Props = {
   response: ScanResponse;
-  logistics: Logistics;
-  onAssemble: () => void;
+  /** A destination: add it as a new leg of the active trip. */
+  onAssemble: (accommodation: AccommodationType) => void;
+  /** A venue: one of the three quick actions ran. */
+  onSpotAction: (result: Extract<SpotActionResult, { ok: true }>) => void;
   onDismiss: () => void;
 };
 
-const PLATFORM_LABEL = {
-  instagram: 'Instagram',
-  tiktok: 'TikTok',
-  reddit: 'Reddit',
-  youtube: 'YouTube',
-  unknown: 'Web',
-} as const;
+const PLATFORM_LABEL = { instagram: 'Instagram', tiktok: 'TikTok', reddit: 'Reddit', youtube: 'YouTube', unknown: 'the web' } as const;
 
 /** Bottom sheet that springs up the moment a scan lands. */
-export function ResultDrawer({ response, logistics, onAssemble, onDismiss }: Props) {
-  const { height } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
-  const offset = useSharedValue(height);
-
-  useEffect(() => {
-    offset.set(withSpring(0, { damping: 22, stiffness: 220, mass: 0.9 }));
-  }, [offset]);
-
-  const close = (then: () => void) => {
-    offset.set(
-      withTiming(height, { duration: 220 }, (finished) => {
-        if (finished) scheduleOnRN(then);
-      }),
-    );
-  };
-
-  const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
-  const backdropStyle = useAnimatedStyle(() => ({ opacity: 1 - Math.min(1, offset.value / height) }));
-
+export function ResultDrawer({ response, onAssemble, onSpotAction, onDismiss }: Props) {
   const { scan, meta } = response;
   const { lat, lng, region } = scan.estimatedLocation;
   const alpine = scan.tripType === 'alpine_backpacking';
+  // Venues get the Night out quick actions; destinations get "Assemble itinerary".
+  const [spot] = useState(() => spotFromScan(response));
+  // Starts on the profile's hiking style; the user can still switch for this trip.
+  const { profile } = useProfile();
+  const [accommodation, setAccommodation] = useState<AccommodationType>(() => accommodationFor(profile.hikingStyle));
 
   return (
-    <View className="absolute inset-0" pointerEvents="box-none">
-      <Animated.View style={[{ position: 'absolute', inset: 0, backgroundColor: `${INK}CC` }, backdropStyle]}>
-        <Pressable accessibilityLabel="Dismiss result" className="flex-1" onPress={() => close(onDismiss)} />
-      </Animated.View>
-
-      <Animated.View
-        accessibilityViewIsModal
-        style={[{ position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: height * 0.78 }, sheetStyle]}
-        className="rounded-t-[32px] border-t border-neon-cyan/30 bg-ink-800"
-      >
-        <View className="items-center pt-3">
-          <View className="h-1 w-10 rounded-full bg-ink-600" />
-        </View>
-
-        <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: insets.bottom + 24 }}>
-          <Text className="font-mono text-xs uppercase tracking-[3px] text-mist-500">
-            Found via {PLATFORM_LABEL[scan.sourcePlatform]}
-          </Text>
-          <Text className="mt-2 text-3xl font-bold text-mist" accessibilityRole="header">
+    <BottomSheet onDismiss={onDismiss} accessibilityLabel={`Scan result: ${scan.destinationName}`}>
+      {(close) => (
+        <>
+          <T variant="label">Found via {PLATFORM_LABEL[scan.sourcePlatform]}</T>
+          <T variant="display" accessibilityRole="header" className="mt-1">
             {scan.destinationName}
-          </Text>
-          <Text className="mt-1 text-base text-mist-400">{region}</Text>
+          </T>
+          <T variant="muted">{spot ? spot.city : region}</T>
 
           <View className="mt-4 flex-row flex-wrap gap-2">
-            <Tag label={alpine ? 'Alpine backpacking' : 'City trip'} tone={alpine ? 'lime' : 'magenta'} />
-            <Tag label={`${lat.toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}`} tone="cyan" mono />
-            <Tag label={`${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`} tone="cyan" mono />
-            {!meta.geocoded && <Tag label="Approximate" tone="amber" />}
+            <Tag label={spot ? spot.category : alpine ? 'Alpine backpacking' : 'City trip'} tone={alpine ? 'hike' : 'night'} />
+            <Tag label={`${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}`} mono />
+            <Tag label={`${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`} mono />
+            {!meta.geocoded && <Tag label="Approximate" tone="alert" />}
           </View>
 
           {scan.extractedContext ? (
-            <Text className="mt-5 text-base leading-6 text-mist-400">“{scan.extractedContext}”</Text>
+            <Text className="mt-4 font-display-italic text-[17px] leading-[24px] text-ink">“{scan.extractedContext}”</Text>
           ) : null}
 
-          {meta.keywords.length > 0 && (
-            <View className="mt-4 flex-row flex-wrap gap-2">
-              {meta.keywords.slice(0, 8).map((k) => (
-                <Tag key={k} label={`#${k}`} />
-              ))}
+          {spot ? (
+            <View className="mt-5">
+              <SpotQuickActions spot={spot} onDone={(result) => close(() => onSpotAction(result))} />
+            </View>
+          ) : (
+            <View className="mt-5 gap-3">
+              {alpine && (
+                <>
+                  <T variant="label">Where will you sleep?</T>
+                  <AccommodationSelector value={accommodation} onChange={setAccommodation} />
+                  <T variant="small">
+                    {accommodation === 'tent'
+                      ? 'We’ll look for public transit to the nearest trailhead first and skip hotels entirely.'
+                      : 'Huts are rarely reachable by bus, so we’ll plan the drive or a carpool.'}
+                  </T>
+                </>
+              )}
+              <Button label="Assemble itinerary" onPress={() => close(() => onAssemble(accommodation))} />
+              <Button label="Scan something else" kind="quiet" onPress={() => close(onDismiss)} />
             </View>
           )}
-
-          {!logistics.publicTransitFeasible && (
-            <View className="mt-5 flex-row gap-3 rounded-2xl border border-neon-amber/40 bg-neon-amber/10 p-4">
-              <SymbolView name={{ ios: 'car.fill', android: 'directions_car', web: 'directions_car' }} tintColor={NEON_AMBER} size={20} />
-              <Text className="flex-1 text-sm leading-5 text-neon-amber">{logistics.reason}</Text>
-            </View>
-          )}
-
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => close(onAssemble)}
-            className="mt-6 items-center rounded-2xl bg-neon-cyan py-4 active:opacity-80"
-            style={{ shadowColor: '#3DF5FF', shadowOpacity: 0.6, shadowRadius: 18, shadowOffset: { width: 0, height: 0 } }}
-          >
-            <Text className="text-base font-bold text-ink">Assemble Itinerary</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={() => close(onDismiss)} className="mt-3 items-center py-3">
-            <Text className="text-sm font-medium text-mist-400">Scan something else</Text>
-          </Pressable>
-        </ScrollView>
-      </Animated.View>
-    </View>
+        </>
+      )}
+    </BottomSheet>
   );
 }

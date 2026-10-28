@@ -1,113 +1,133 @@
-import * as Crypto from 'expo-crypto';
-import { createContext, type ReactNode, use, useCallback, useMemo, useReducer } from 'react';
+import { createContext, type ReactNode, use, useCallback, useMemo, useRef, useState } from 'react';
 
-import { addDays, nextFriday } from '@/lib/dates';
-import { LYON_PART_DIEU, planLogistics } from '@/lib/scanner/logistics';
-import type { TripScan } from '@/lib/scanner/schema';
+import { generateTailoredItinerary, routingFromProfile } from '@/lib/logistics/tailoredEngine';
+import { useProfile } from '@/lib/profile/ProfileContext';
+import type { ScanResponse } from '@/lib/scanner/schema';
+import type { LifestyleSpot, SpotAction, SpotActionResult } from '@/lib/spots/types';
+import { applySpotAction, newTrip, rechain, type TripsState } from '@/lib/trips/itinerary';
 import { publishTrip } from '@/lib/trips/repository';
-import type { Place, Trip, TripStop } from '@/lib/trips/types';
+import type { AccommodationType, Trip, TripStop } from '@/lib/trips/types';
 
-// In-memory for now. Swap the reducer's storage for expo-sqlite/kv-store
+// In-memory for now. Swap the useState below for expo-sqlite/kv-store
 // (or Supabase Auth + a per-user table) to keep trips across launches.
 
-type State = { draft: Trip; saved: Trip[] };
+type State = TripsState & { spots: LifestyleSpot[] };
 
-type Action =
-  | { type: 'addStop'; scan: TripScan }
-  | { type: 'setNights'; stopId: string; nights: number }
-  | { type: 'removeStop'; stopId: string }
-  | { type: 'renameDraft'; title: string }
-  | { type: 'commitDraft' }
-  | { type: 'saveTrip'; trip: Trip };
-
-const DEFAULT_NIGHTS = 2;
-
-function newDraft(): Trip {
-  return { id: Crypto.randomUUID(), title: 'Untitled escape', stops: [], createdAt: new Date().toISOString() };
-}
-
-/** Re-chains dates and logistics so each stop departs from the previous one. */
-function rechain(stops: TripStop[]): TripStop[] {
-  let origin: Place = LYON_PART_DIEU;
-  let startDate = stops[0]?.startDate ?? nextFriday();
-  return stops.map((stop) => {
-    const next = { ...stop, startDate, logistics: planLogistics(stop.scan, origin) };
-    origin = { name: stop.scan.destinationName, ...stop.scan.estimatedLocation };
-    startDate = addDays(startDate, stop.nights);
-    return next;
-  });
-}
-
-function reducer(state: State, action: Action): State {
-  const { draft } = state;
-  switch (action.type) {
-    case 'addStop': {
-      const stop: TripStop = {
-        id: Crypto.randomUUID(),
-        scan: action.scan,
-        startDate: nextFriday(),
-        nights: DEFAULT_NIGHTS,
-        logistics: planLogistics(action.scan),
-      };
-      const title = draft.stops.length === 0 ? `${action.scan.destinationName} escape` : draft.title;
-      return { ...state, draft: { ...draft, title, stops: rechain([...draft.stops, stop]) } };
-    }
-    case 'setNights': {
-      const stops = draft.stops.map((s) =>
-        s.id === action.stopId ? { ...s, nights: Math.min(30, Math.max(1, action.nights)) } : s,
-      );
-      return { ...state, draft: { ...draft, stops: rechain(stops) } };
-    }
-    case 'removeStop':
-      return { ...state, draft: { ...draft, stops: rechain(draft.stops.filter((s) => s.id !== action.stopId)) } };
-    case 'renameDraft':
-      return { ...state, draft: { ...draft, title: action.title } };
-    case 'commitDraft':
-      return { draft: newDraft(), saved: [draft, ...state.saved] };
-    case 'saveTrip':
-      return { ...state, saved: [action.trip, ...state.saved.filter((t) => t.id !== action.trip.id)] };
-  }
-}
-
-type TripsContextValue = State & {
-  addStop: (scan: TripScan) => void;
+type TripsContextValue = {
+  trips: Trip[];
+  activeTrip: Trip;
+  spots: LifestyleSpot[];
+  setActiveTrip: (tripId: string) => void;
+  renameActiveTrip: (title: string) => void;
+  /** Adds a scanned destination as a new leg of the active trip, tailored to the profile. Pass `accommodation` to override the profile's hiking style. */
+  addScannedStop: (response: ScanResponse, accommodation?: AccommodationType, imageUri?: string) => void;
   setNights: (stopId: string, nights: number) => void;
+  setAccommodation: (stopId: string, accommodation: AccommodationType) => void;
   removeStop: (stopId: string) => void;
-  renameDraft: (title: string) => void;
-  /** Saves the draft locally, then publishes it so its share link works. */
-  saveDraft: () => Promise<{ trip: Trip; publishError: string | null }>;
-  /** Copies a friend's shared trip into "My trips". */
+  removeTimelineItem: (stopId: string, itemId: string) => void;
+  /** Keeps a scanned or typed spot in the Night out list. */
+  saveSpot: (spot: LifestyleSpot) => void;
+  /** Runs one of the three Night out quick actions. */
+  runSpotAction: (action: SpotAction) => SpotActionResult;
+  /** Publishes the active trip so its share link works. */
+  publishActiveTrip: () => Promise<{ trip: Trip; publishError: string | null }>;
+  /** Copies a friend's shared trip into your trips. */
   mirrorTrip: (trip: Trip) => void;
 };
 
 const TripsContext = createContext<TripsContextValue | null>(null);
 
+function initialState(): State {
+  const trip = newTrip();
+  return { trips: [trip], activeTripId: trip.id, spots: [] };
+}
+
 export function TripsProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, () => ({ draft: newDraft(), saved: [] }));
+  const [state, setState] = useState<State>(initialState);
+  // Mirror of the latest state so runSpotAction can return its result
+  // synchronously. Every update goes through commit(), which keeps it current.
+  const latest = useRef(state);
+  const { profile } = useProfile();
+  // Trips leave from the profile's base and name its rail cards.
+  const ctx = useMemo(() => routingFromProfile(profile), [profile]);
 
-  const saveDraft = useCallback(async () => {
-    const trip = state.draft;
-    dispatch({ type: 'commitDraft' });
-    try {
-      await publishTrip(trip);
-      return { trip, publishError: null };
-    } catch (error) {
-      return { trip, publishError: error instanceof Error ? error.message : String(error) };
-    }
-  }, [state.draft]);
+  const commit = useCallback((next: State) => {
+    latest.current = next;
+    setState(next);
+  }, []);
 
-  const value = useMemo<TripsContextValue>(
-    () => ({
-      ...state,
-      addStop: (scan) => dispatch({ type: 'addStop', scan }),
-      setNights: (stopId, nights) => dispatch({ type: 'setNights', stopId, nights }),
-      removeStop: (stopId) => dispatch({ type: 'removeStop', stopId }),
-      renameDraft: (title) => dispatch({ type: 'renameDraft', title }),
-      saveDraft,
-      mirrorTrip: (trip) => dispatch({ type: 'saveTrip', trip: { ...trip, mirroredFrom: trip.id } }),
-    }),
-    [state, saveDraft],
+  /** Applies `fn` to the active trip's stops and re-chains dates and logistics. */
+  const updateStops = useCallback(
+    (fn: (stops: TripStop[]) => TripStop[]) => {
+      const s = latest.current;
+      commit({
+        ...s,
+        trips: s.trips.map((t) => (t.id === s.activeTripId ? { ...t, stops: rechain(fn(t.stops), ctx) } : t)),
+      });
+    },
+    [commit, ctx],
   );
+
+  const value = useMemo<TripsContextValue>(() => {
+    const activeTrip = state.trips.find((t) => t.id === state.activeTripId) ?? state.trips[0];
+    return {
+      trips: state.trips,
+      activeTrip,
+      spots: state.spots,
+      setActiveTrip: (tripId) => commit({ ...latest.current, activeTripId: tripId }),
+      renameActiveTrip: (title) => {
+        const s = latest.current;
+        commit({ ...s, trips: s.trips.map((t) => (t.id === s.activeTripId ? { ...t, title } : t)) });
+      },
+      addScannedStop: (response, accommodation, imageUri) => {
+        const style = accommodation ? (accommodation === 'tent' ? 'WILD_CAMPING' : 'REFUGE_HUT') : profile.hikingStyle;
+        const { stop: tailored } = generateTailoredItinerary(response, { ...profile, hikingStyle: style });
+        const stop = { ...tailored, sourceImageUri: imageUri };
+        const s = latest.current;
+        const active = s.trips.find((t) => t.id === s.activeTripId);
+        if (active && active.stops.length === 0) {
+          commit({
+            ...s,
+            trips: s.trips.map((t) => (t.id === active.id ? { ...t, title: `${stop.place.name} escape` } : t)),
+          });
+        }
+        updateStops((stops) => [...stops, stop]);
+      },
+      setNights: (stopId, nights) =>
+        updateStops((stops) => stops.map((s) => (s.id === stopId ? { ...s, nights: Math.min(30, Math.max(1, nights)) } : s))),
+      setAccommodation: (stopId, accommodation) =>
+        updateStops((stops) => stops.map((s) => (s.id === stopId && s.kind === 'alpine' ? { ...s, accommodation } : s))),
+      removeStop: (stopId) => updateStops((stops) => stops.filter((s) => s.id !== stopId)),
+      removeTimelineItem: (stopId, itemId) =>
+        updateStops((stops) =>
+          stops.map((s) => (s.id === stopId ? { ...s, timeline: s.timeline.filter((i) => i.id !== itemId) } : s)),
+        ),
+      saveSpot: (spot) => {
+        const s = latest.current;
+        commit({ ...s, spots: [spot, ...s.spots.filter((x) => x.id !== spot.id)] });
+      },
+      runSpotAction: (action) => {
+        const s = latest.current;
+        const { state: next, result } = applySpotAction(s, action, ctx);
+        if (result.ok) commit({ ...s, ...next, spots: [action.spot, ...s.spots.filter((x) => x.id !== action.spot.id)] });
+        return result;
+      },
+      publishActiveTrip: async () => {
+        const s = latest.current;
+        const trip = s.trips.find((t) => t.id === s.activeTripId)!;
+        try {
+          await publishTrip(trip);
+          return { trip, publishError: null };
+        } catch (error) {
+          return { trip, publishError: error instanceof Error ? error.message : String(error) };
+        }
+      },
+      mirrorTrip: (trip) => {
+        const s = latest.current;
+        commit({ ...s, trips: [{ ...trip, mirroredFrom: trip.id }, ...s.trips.filter((t) => t.id !== trip.id)] });
+      },
+    };
+  }, [state, commit, updateStops, ctx, profile]);
 
   return <TripsContext value={value}>{children}</TripsContext>;
 }

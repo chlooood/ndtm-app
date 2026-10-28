@@ -1,13 +1,16 @@
 import '../../global.css';
 
+import { DMMono_400Regular } from '@expo-google-fonts/dm-mono';
+import { DMSans_400Regular, DMSans_500Medium, DMSans_600SemiBold } from '@expo-google-fonts/dm-sans';
+import { Newsreader_500Medium_Italic, Newsreader_600SemiBold } from '@expo-google-fonts/newsreader';
 import { useFonts } from 'expo-font';
-import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
+import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
-import { INK, INK_800, MIST, NEON_CYAN } from '@/components/ui/theme';
+import { PALETTES } from '@/components/ui/theme';
+import { ProfileProvider } from '@/lib/profile/ProfileContext';
 import { TripsProvider } from '@/lib/trips/store';
 
 export {
@@ -22,14 +25,20 @@ export const unstable_settings = {
 
 SplashScreen.preventAutoHideAsync();
 
+const home = PALETTES.home;
 const theme = {
-  ...DarkTheme,
-  colors: { ...DarkTheme.colors, background: INK, card: INK_800, text: MIST, primary: NEON_CYAN, border: INK_800 },
+  ...DefaultTheme,
+  colors: { ...DefaultTheme.colors, background: home.paper, card: home.card, text: home.ink, primary: home.accent, border: home.line },
 };
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
-    SpaceMono: require('../../assets/fonts/SpaceMono-Regular.ttf'),
+    Newsreader_600SemiBold,
+    Newsreader_500Medium_Italic,
+    DMSans_400Regular,
+    DMSans_500Medium,
+    DMSans_600SemiBold,
+    DMMono_400Regular,
   });
 
   useEffect(() => {
@@ -44,14 +53,17 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={theme}>
-      <TripsProvider>
-        <StatusBar style="light" />
-        <Stack screenOptions={{ contentStyle: { backgroundColor: INK } }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="index" options={{ headerShown: false }} />
-          <Stack.Screen name="trip/[id]" options={{ presentation: 'modal', title: 'Shared trip' }} />
-        </Stack>
-      </TripsProvider>
+      <ProfileProvider>
+        <TripsProvider>
+          <Stack screenOptions={{ contentStyle: { backgroundColor: home.paper }, headerShown: false }}>
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="index" />
+            <Stack.Screen name="scan" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="friends" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="trip/[id]" options={{ presentation: 'modal' }} />
+          </Stack>
+        </TripsProvider>
+      </ProfileProvider>
     </ThemeProvider>
   );
 }

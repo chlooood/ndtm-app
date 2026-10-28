@@ -26,7 +26,7 @@ export function parseTripIdFromUrl(url: string): string | null {
 /** Opens the OS share sheet with the trip link. */
 export async function shareTrip(trip: Trip): Promise<void> {
   const url = createTripShareUrl(trip.id);
-  const places = trip.stops.map((s) => s.scan.destinationName).join(' → ');
+  const places = trip.stops.map((s) => s.place.name).join(' → ');
   await Share.share({
     title: trip.title,
     // Android ignores `url`, so the link is also in the message.

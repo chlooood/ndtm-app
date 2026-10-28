@@ -1,9 +1,12 @@
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, ScrollView, View } from 'react-native';
 
 import { StopCard } from '@/components/trips/StopCard';
-import { NEON_CYAN } from '@/components/ui/theme';
+import { Button } from '@/components/ui/Button';
+import { Screen } from '@/components/ui/Screen';
+import { T } from '@/components/ui/Text';
+import { PALETTES } from '@/components/ui/theme';
 import { fetchSharedTrip } from '@/lib/trips/repository';
 import { useTrips } from '@/lib/trips/store';
 import type { Trip } from '@/lib/trips/types';
@@ -11,7 +14,7 @@ import type { Trip } from '@/lib/trips/types';
 /** Target of ndtm://trip/<id>. Loads a friend's itinerary and lets you mirror it. */
 export default function SharedTripScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { mirrorTrip, saved } = useTrips();
+  const { mirrorTrip, setActiveTrip, trips } = useTrips();
   const router = useRouter();
   // Keyed by id so opening a second link shows the spinner instead of the previous trip.
   type Loaded = { id?: string; trip?: Trip | null; error?: string };
@@ -28,45 +31,38 @@ export default function SharedTripScreen() {
     };
   }, [id]);
 
-  const alreadySaved = saved.some((t) => t.id === id);
-
-  if (state.error || state.trip === null) {
-    return (
-      <View className="flex-1 items-center justify-center bg-ink px-8">
-        <Text className="text-center text-lg font-semibold text-mist">Trip not found</Text>
-        <Text className="mt-2 text-center text-mist-400">{state.error ?? 'This link may be broken or the trip was never published.'}</Text>
-      </View>
-    );
-  }
-
-  if (!state.trip) {
-    return (
-      <View className="flex-1 items-center justify-center bg-ink">
-        <ActivityIndicator color={NEON_CYAN} />
-      </View>
-    );
-  }
-
+  const alreadySaved = trips.some((t) => t.id === id);
   const trip = state.trip;
+
   return (
-    <>
-      <Stack.Screen options={{ title: trip.title }} />
-      <ScrollView className="flex-1 bg-ink" contentContainerClassName="gap-4 p-5 pb-12">
-        {trip.stops.map((stop, i) => (
-          <StopCard key={stop.id} stop={stop} index={i} />
-        ))}
-        <Pressable
-          accessibilityRole="button"
-          disabled={alreadySaved}
-          onPress={() => {
-            mirrorTrip(trip);
-            router.dismissTo('/trips');
-          }}
-          className="items-center rounded-2xl bg-neon-cyan py-4 active:opacity-80 disabled:opacity-40"
-        >
-          <Text className="text-base font-bold text-ink">{alreadySaved ? 'Already in your trips' : 'Mirror to my trips'}</Text>
-        </Pressable>
-      </ScrollView>
-    </>
+    <Screen world="home" eyebrow="Shared with you" title={trip?.title ?? 'Shared trip'} corners={false}>
+      {state.error || trip === null ? (
+        <View className="flex-1 items-center justify-center px-8">
+          <T variant="heading">Trip not found</T>
+          <T variant="muted" className="mt-1 text-center">
+            {state.error ?? 'This link may be broken, or the trip was never published.'}
+          </T>
+        </View>
+      ) : !trip ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator color={PALETTES.home.accent} />
+        </View>
+      ) : (
+        <ScrollView contentContainerClassName="gap-4 px-5 pb-16">
+          {trip.stops.map((stop, i) => (
+            <StopCard key={stop.id} stop={stop} index={i} />
+          ))}
+          <Button
+            label={alreadySaved ? 'Already in your trips' : 'Mirror to my trips'}
+            disabled={alreadySaved}
+            onPress={() => {
+              mirrorTrip(trip);
+              setActiveTrip(trip.id);
+              router.dismissTo('/home');
+            }}
+          />
+        </ScrollView>
+      )}
+    </Screen>
   );
 }
